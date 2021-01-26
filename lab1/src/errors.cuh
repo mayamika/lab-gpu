@@ -17,4 +17,11 @@
 
 #define CHECK_KERNEL_ERRORS() CHECK_CALL_ERRORS(cudaGetLastError());
 
+#define FATAL(description)                                                   \
+    do {                                                                     \
+        fprintf(stderr, "ERROR in %s:%d. Message: %s\n", __FILE__, __LINE__, \
+                description);                                                \
+        exit(0);                                                             \
+    } while (0);
+
 #endif

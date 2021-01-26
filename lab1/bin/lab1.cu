@@ -20,9 +20,8 @@ int main() {
         std::cin >> it;
     }
 
-    std::vector<float> mins;
-    ElementwiseMin(gpu::Vector<float>(lhs), gpu::Vector<float>(rhs))
-        .populate(mins);
+    std::vector<float> mins =
+        ElementwiseMin(gpu::Vector<float>(lhs), gpu::Vector<float>(rhs)).host();
 
     std::cout.precision(10);
     for (auto& it : mins) {

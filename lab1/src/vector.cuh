@@ -82,6 +82,14 @@ public:
                                      cudaMemcpyDeviceToHost));
     }
 
+    std::vector<Type> host() const {
+        std::vector<Type> result(this->_size);
+        CHECK_CALL_ERRORS(cudaMemcpy(result.data(), this->_data,
+                                     sizeof(Type) * this->_size,
+                                     cudaMemcpyDeviceToHost));
+        return result;
+    }
+
     ~Vector() { this->clear(); };
 
     const Vector& operator=(const Vector& src) {
@@ -96,7 +104,7 @@ public:
 
     friend Vector ElementwiseMin(const Vector& lhs, const Vector& rhs) {
         if (lhs._size != rhs._size) {
-            throw std::logic_error("lhs.size() != rhs.size()");
+            FATAL("lhs.size() != rhs.size()");
         }
         size_t size = lhs._size;
         Vector result(size);
