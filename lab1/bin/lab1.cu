@@ -24,9 +24,11 @@ int main() {
         ElementwiseMin(gpu::Vector<float>(lhs), gpu::Vector<float>(rhs)).Host();
 
     std::cout.precision(10);
+    std::cout << std::fixed << std::scientific;
     for (auto& it : mins) {
-        std::cout << std::fixed << std::scientific << it << ' ';
+        std::cout << it << ' ';
     }
     std::cout << '\n';
+
     return 0;
 }
