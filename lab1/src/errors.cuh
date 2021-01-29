@@ -11,9 +11,7 @@
 
 #define CHECK_CALL_ERRORS(call)                                        \
     do {                                                               \
-        cudaDeviceSynchronize();                                       \
         cudaError_t res = call;                                        \
-        cudaDeviceSynchronize();                                       \
         if (res != cudaSuccess) {                                      \
             fprintf(stderr, "ERROR in %s:%d. Message: %s\n", __FILE__, \
                     __LINE__, cudaGetErrorString(res));                \
