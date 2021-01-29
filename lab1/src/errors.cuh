@@ -3,6 +3,12 @@
 
 #include <cstdio>
 
+#ifdef __INTELLISENSE__
+#define __global__
+#define __device__
+#define __host__
+#endif
+
 #define CHECK_CALL_ERRORS(call)                                        \
     do {                                                               \
         cudaDeviceSynchronize();                                       \

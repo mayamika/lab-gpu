@@ -6,14 +6,7 @@
 
 #include "errors.cuh"
 
-#ifdef __INTELLISENSE__
-#define __global__
-#define __device__
-#define __host__
-#endif
-
 namespace gpu {
-
 template <class Type>
 __global__ void __memset(Type* data, size_t size, Type value) {
     size_t idx = threadIdx.x + blockIdx.x * blockDim.x;

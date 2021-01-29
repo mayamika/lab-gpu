@@ -13,3 +13,7 @@ $(PACKAGES): $(addprefix $(OUTPUT_DIR),%.tar):
 	gpg -u $(SIGNER_EMAIL) -ab "$@"
 
 all: $(PACKAGES)
+
+.PHONY: clean
+clean:
+	$(RM) -r $(OUTPUT_DIR)
