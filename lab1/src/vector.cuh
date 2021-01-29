@@ -58,7 +58,7 @@ public:
                                      cudaMemcpyHostToDevice));
     };
 
-    size_t size() const { return this->size_; }
+    size_t Size() const { return this->size_; }
 
     void Clear() {
         if (this->data_ != nullptr) {
