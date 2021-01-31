@@ -37,7 +37,7 @@ std::vector<float> get_gaussian_weights(int r) {
         filter[i] = gaussian_fuction(i, r);
         sum += filter[i];
     }
-    sum = 2 * (sum - filter[0]) + sum;
+    sum = 2 * (sum - filter[0]) + filter[0];
     for (int i = 0; i <= r; ++i) {
         filter[i] /= (sum);
     }
@@ -116,8 +116,7 @@ __device__ uchar4 gaussian_blur_kernel(int y, int x, int radius,
         result = float4_add(result, float4_multiply(p, weights[abs(i)]));
     }
     // printf("%f %f %f %f\n", r, g, b, w);
-    return make_uchar4(roundf(result.x), roundf(result.y), roundf(result.z),
-                       roundf(result.w));
+    return make_uchar4(result.x, result.y, result.z, result.w);
 }
 
 __global__ void gaussian_blur(uchar4* data, int width, int height, int radius,
@@ -152,6 +151,7 @@ image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
         weights.Data(), false);
     CHECK_KERNEL_ERRORS();
 
+    cudaDeviceSynchronize();
     // copy results
     CHECK_CALL_ERRORS(cudaMemcpyToArray(
         texture.array, 0, 0, first_results.Data(),
