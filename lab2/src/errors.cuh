@@ -10,6 +10,9 @@
 struct uchar4 {
     int x, y, z, w;
 };
+struct float4 {
+    float x, y, z, w;
+};
 #define cudaChannelFormatDesc void*
 #define cudaArray void*
 #define cudaError_t void*
@@ -24,6 +27,8 @@ void* cudaCreateChannelDesc();
 void* cudaMallocArray(void*, void*, int, int);
 void* cudaFreeArray(void*);
 char* cudaGetErrorString(void*);
+template <typename T>
+uchar4 tex2D(T, int, int);
 void* cudaMemcpyToArray(void*, int, int, const void*, int, int);
 template <typename T, size_t, typename TT>
 struct texture {
