@@ -46,7 +46,7 @@ public:
         CHECK_CALL_ERRORS(cudaMalloc(&this->data_, sizeof(Type) * this->size_));
         CHECK_CALL_ERRORS(cudaMemcpy(this->data_, src.data_,
                                      sizeof(Type) * src.size_,
-                                     cudaMemcpyHostToDevice));
+                                     cudaMemcpyDeviceToDevice));
     }
 
     Vector(Vector&& src) : size_(src.size_), data_(src.data_) {}

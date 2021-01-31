@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -38,8 +40,8 @@ int main() {
 
     Image image = read_image(input_path);
     image = apply_blur(image, radius);
-
     write_image(image, output_path);
+
     return 0;
 }
 
@@ -69,6 +71,98 @@ void write_image(const Image& image, const std::string& filepath) {
         sizeof(uchar4) * image.data.size());
 }
 
+template <typename T>
+__device__ T min(T a, T b) {
+    if (a < b) return a;
+    return b;
+}
+
+template <typename T>
+__device__ T max(T a, T b) {
+    if (a > b) return a;
+    return b;
+}
+
+#define PI acosf(-1)
+
+__device__ uchar4 horizontal_gaussian_kernel(int y, int x, int radius) {
+    float r = 0, g = 0, b = 0, w = 0;
+    for (int i = -radius; i <= radius; ++i) {
+        uchar4 p = tex2D(image_texture, x + i, y);
+        float mult = expf((-1. * i * i) / (2. * radius * radius));
+        // printf("mult: %f\n", mult);
+        r += p.x * mult;
+        g += p.y * mult;
+        b += p.z * mult;
+        w += p.w * mult;
+    }
+    // printf("bef: %f %f %f %f\n", r, g, b, w);
+    float den = (radius * sqrtf(2 * PI));
+    r /= den;
+    g /= den;
+    b /= den;
+    w /= den;
+    // printf("%f %f %f %f\n", r, g, b, w);
+    return make_uchar4((unsigned char)roundf(r), (unsigned char)roundf(g),
+                       (unsigned char)roundf(b), (unsigned char)roundf(w));
+}
+
+__device__ uchar4 vertical_gaussian_kernel(uchar4* data, int width, int height,
+                                           int y, int x, int radius) {
+    float r = 0, g = 0, b = 0, w = 0;
+    for (int i = -radius; i <= radius; ++i) {
+        int from_y = max(min(height - 1, y + i), 0);
+        uchar4 p = data[from_y * width + x];
+        // printf("%f %f %f %d\n", p.x, p.y, p.z, p.w);
+        float mult = expf((-1. * i * i) / (2. * radius * radius));
+        r += p.x * mult;
+        g += p.y * mult;
+        b += p.z * mult;
+        w += p.w * mult;
+    }
+    float den = (radius * sqrtf(2 * PI));
+    r /= den;
+    g /= den;
+    b /= den;
+    w /= den;
+    // printf("%f %f %f %f\n", r, g, b, w);
+    return make_uchar4((unsigned char)roundf(r), (unsigned char)roundf(g),
+                       (unsigned char)roundf(b), (unsigned char)roundf(w));
+}
+
+__global__ void horizontal_gaussian_blur(uchar4* data, int width, int height,
+                                         int radius) {
+    int id_x = threadIdx.x + blockIdx.x * blockDim.x;
+    int id_y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    int offset_x = blockDim.x * gridDim.x;
+    int offset_y = blockDim.y * gridDim.y;
+
+    for (int i = id_y; i < height; i += offset_y) {
+        for (int j = id_x; j < width; j += offset_x) {
+            data[i * width + j] = horizontal_gaussian_kernel(i, j, radius);
+        }
+    }
+}
+
+__global__ void vertical_gaussian_blur(uchar4* data, uchar4* first_results,
+                                       int width, int height, int radius) {
+    int id_x = threadIdx.x + blockIdx.x * blockDim.x;
+    int id_y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    int offset_x = blockDim.x * gridDim.x;
+    int offset_y = blockDim.y * gridDim.y;
+
+    for (int i = id_y; i < height; i += offset_y) {
+        for (int j = id_x; j < width; j += offset_x) {
+            data[i * width + j] = vertical_gaussian_kernel(
+                first_results, width, height, i, j, radius);
+        }
+    }
+}
+
+const size_t NBlocks = 256, NThreads = 256;
+
 Image apply_blur(const Image& source_image, int radius) {
     cudaChannelFormatDesc desc = cudaCreateChannelDesc<uchar4>();
     cudaArray* texture_array;
@@ -86,7 +180,20 @@ Image apply_blur(const Image& source_image, int radius) {
 
     CHECK_CALL_ERRORS(
         cudaBindTextureToArray(image_texture, texture_array, desc));
-    gpu::Vector<uchar4, 256, 256> result_device(source_image.data.size());
+    gpu::Vector<uchar4, NBlocks, NThreads> result_device(
+        source_image.data.size());
+
+    dim3 grid_dim((int)sqrt(NBlocks), (int)sqrt(NBlocks));
+    dim3 block_dim((int)sqrt(NThreads), (int)sqrt(NThreads));
+
+    horizontal_gaussian_blur<<<grid_dim, block_dim>>>(
+        result_device.Data(), source_image.width, source_image.height, radius);
+    CHECK_KERNEL_ERRORS();
+    gpu::Vector<uchar4> first_results_copy(result_device);
+    vertical_gaussian_blur<<<grid_dim, block_dim>>>(
+        result_device.Data(), first_results_copy.Data(), source_image.width,
+        source_image.height, radius);
+    CHECK_KERNEL_ERRORS();
 
     CHECK_CALL_ERRORS(cudaUnbindTexture(image_texture));
     CHECK_CALL_ERRORS(cudaFreeArray(texture_array));

@@ -1,6 +1,6 @@
 # compilation
 CC := nvcc
-CFLAGS := -Werror cross-execution-space-call -lm -std=c++11
+CFLAGS := -Werror cross-execution-space-call -lm -D_MWAITXINTRIN_H_INCLUDED -std=c++11
 
 # target
 TARGET := lab2

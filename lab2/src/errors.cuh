@@ -7,7 +7,9 @@
 #define __global__
 #define __device__
 #define __host__
-#define uchar4 unsigned char
+struct uchar4 {
+    int x, y, z, w;
+};
 #define cudaChannelFormatDesc void*
 #define cudaArray void*
 #define cudaError_t void*
@@ -16,6 +18,7 @@
 #define cudaReadModeElementType int
 #define cudaFilterModePoint 0
 #define cudaAddressModeClamp 0
+cudaError_t cudaGetLastError();
 template <typename T>
 void* cudaCreateChannelDesc();
 void* cudaMallocArray(void*, void*, int, int);
@@ -33,6 +36,9 @@ template <typename T>
 void* cudaBindTextureToArray(T, void*, void*);
 template <typename T>
 void* cudaUnbindTexture(T);
+struct dim3 {
+    dim3(int a, int b){};
+};
 #endif
 
 #define CHECK_CALL_ERRORS(call)                                        \
