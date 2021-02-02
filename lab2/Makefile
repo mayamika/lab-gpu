@@ -1,6 +1,11 @@
 # compilation
 CC := nvcc
-CFLAGS := -Werror cross-execution-space-call -lm -D_MWAITXINTRIN_H_INCLUDED -std=c++11
+CFLAGS := -Werror cross-execution-space-call -lm -D_MWAITXINTRIN_H_INCLUDED
+
+CPPSTD ?=
+ifneq ($(CPPSTD),)
+CFLAGS := $(CFLAGS) -std=$(CPPSTD)
+endif
 
 # target
 TARGET := lab2
