@@ -7,7 +7,7 @@
 
 namespace signals {
 void __nop_handler(int sig) {
-    std::cout << "unexpected signal received: " << sig << std::endl;
+    std::cerr << "unexpected signal received: " << sig << std::endl;
     exit(0);
 }
 

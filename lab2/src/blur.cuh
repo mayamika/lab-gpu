@@ -44,32 +44,6 @@ std::vector<float> get_gaussian_weights(int r) {
     return filter;
 }
 
-using _CudaTexture = texture<uchar4, 2, cudaReadModeElementType>;
-_CudaTexture global_texture;
-
-struct _Texture {
-    cudaArray* array;
-
-    _Texture(const image::Image& image) {
-        cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
-        CHECK_CALL_ERRORS(cudaMallocArray(&(this->array), &channel_desc,
-                                          image.width, image.height));
-        CHECK_CALL_ERRORS(cudaMemcpyToArray(
-            this->array, 0, 0, image.data.data(),
-            sizeof(uchar4) * image.data.size(), cudaMemcpyHostToDevice));
-        CHECK_CALL_ERRORS(
-            cudaBindTextureToArray(global_texture, this->array, channel_desc));
-    }
-
-    _Texture(const _Texture&) = delete;
-    const _Texture& operator=(const _Texture&) = delete;
-
-    ~_Texture() {
-        CHECK_CALL_ERRORS(cudaUnbindTexture(global_texture));
-        CHECK_CALL_ERRORS(cudaFreeArray(this->array));
-    }
-};
-
 __device__ float4 float4_add(float4 u, float v) {
     u.x += v;
     u.y += v;
@@ -102,24 +76,31 @@ __device__ float4 float4_multiply(float4 u, float4 v) {
     return u;
 }
 
-__device__ float4 uchar4_to_float4(uchar4 p) {
+__host__ __device__ float4 uchar4_to_float4(uchar4 p) {
     return make_float4(p.x, p.y, p.z, p.w);
 }
 
-__device__ uchar4 gaussian_blur_kernel(int y, int x, int radius,
+__host__ __device__ uchar4 float4_to_uchar4_rounded(float4 p) {
+    return make_uchar4((p.x), (p.y), (p.z), (p.w));
+}
+
+using _CudaTexture = texture<float4, 2, cudaReadModeElementType>;
+_CudaTexture source_texture, intermediate_results_texture;
+
+__device__ float4 gaussian_blur_kernel(int y, int x, int radius,
                                        const float* weights, bool vertical) {
     float4 result = make_float4(0, 0, 0, 0);
     for (int i = -radius; i <= radius; ++i) {
-        float4 p = uchar4_to_float4(tex2D(
-            global_texture, (vertical) ? x : x + i, (vertical) ? y + i : y));
+        float4 p = tex2D(source_texture, (vertical) ? x : x + i,
+                         (vertical) ? y + i : y);
         // printf("%f %f %f %d\n", p.x, p.y, p.z, p.w);
         result = float4_add(result, float4_multiply(p, weights[abs(i)]));
     }
     // printf("%f %f %f %f\n", r, g, b, w);
-    return make_uchar4(result.x, result.y, result.z, result.w);
+    return result;
 }
 
-__global__ void gaussian_blur(uchar4* data, int width, int height, int radius,
+__global__ void gaussian_blur(float4* data, int width, int height, int radius,
                               const float* weights, bool vertical) {
     int id_x = threadIdx.x + blockIdx.x * blockDim.x;
     int id_y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -137,35 +118,77 @@ __global__ void gaussian_blur(uchar4* data, int width, int height, int radius,
 
 template <size_t NBlocks = 256, size_t NThreads = 256>
 image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
-    _Texture texture(source_image);
+    // transform source data to floats
+    std::vector<float4> source_data(source_image.data.size());
+    for (size_t i = 0; i < source_data.size(); ++i)
+        source_data[i] = uchar4_to_float4(source_image.data[i]);
 
+    // texture initialization
+    cudaArray* source_array;
+    {
+        cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<float4>();
+        CHECK_CALL_ERRORS(cudaMallocArray(&(source_array), &channel_desc,
+                                          source_image.width,
+                                          source_image.height));
+        CHECK_CALL_ERRORS(cudaMemcpyToArray(
+            source_array, 0, 0, source_data.data(),
+            sizeof(float4) * source_data.size(), cudaMemcpyHostToDevice));
+        CHECK_CALL_ERRORS(
+            cudaBindTextureToArray(source_texture, source_array, channel_desc));
+    }
+
+    // kernel params
     dim3 grid_dim((int)sqrt(NBlocks), (int)sqrt(NBlocks));
     dim3 block_dim((int)sqrt(NThreads), (int)sqrt(NThreads));
 
     gpu::Vector<float, NBlocks, NThreads> weights(get_gaussian_weights(radius));
     // horizontal
-    gpu::Vector<uchar4, NBlocks, NThreads> first_results(
-        source_image.data.size(), make_uchar4(0, 0, 0, 0));
+    gpu::Vector<float4, NBlocks, NThreads> first_results(
+        source_image.data.size(), make_float4(0, 0, 0, 0));
     gaussian_blur<<<grid_dim, block_dim>>>(
         first_results.Data(), source_image.width, source_image.height, radius,
         weights.Data(), false);
     CHECK_KERNEL_ERRORS();
 
     cudaDeviceSynchronize();
-    // copy results
-    CHECK_CALL_ERRORS(cudaMemcpyToArray(
-        texture.array, 0, 0, first_results.Data(),
-        sizeof(uchar4) * first_results.Size(), cudaMemcpyDeviceToDevice));
+    // intermediate results texture initialization
+    cudaArray* intermediate_results_array;
+    {
+        cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<float4>();
+        CHECK_CALL_ERRORS(cudaMallocArray(&(intermediate_results_array),
+                                          &channel_desc, source_image.width,
+                                          source_image.height));
+        CHECK_CALL_ERRORS(cudaMemcpyToArray(
+            source_array, 0, 0, first_results.Data(),
+            sizeof(float4) * first_results.Size(), cudaMemcpyDeviceToDevice));
+        CHECK_CALL_ERRORS(cudaBindTextureToArray(intermediate_results_texture,
+                                                 intermediate_results_array,
+                                                 channel_desc));
+    }
 
     // vertical
-    gpu::Vector<uchar4, NBlocks, NThreads> second_results(
-        source_image.data.size(), make_uchar4(0, 0, 0, 0));
+    gpu::Vector<float4, NBlocks, NThreads> second_results(
+        source_image.data.size(), make_float4(0, 0, 0, 0));
     gaussian_blur<<<grid_dim, block_dim>>>(
         second_results.Data(), source_image.width, source_image.height, radius,
         weights.Data(), true);
     CHECK_KERNEL_ERRORS();
 
-    return {source_image.width, source_image.height, second_results.Host()};
+    // source texture cleanup
+    CHECK_CALL_ERRORS(cudaUnbindTexture(source_texture));
+    CHECK_CALL_ERRORS(cudaFreeArray(source_array));
+
+    // intermediate results texture cleanup
+    CHECK_CALL_ERRORS(cudaUnbindTexture(intermediate_results_texture));
+    CHECK_CALL_ERRORS(cudaFreeArray(intermediate_results_array));
+
+    std::vector<float4> results_float4 = second_results.Host();
+    std::vector<uchar4> results(results_float4.size());
+    for (size_t i = 0; i < results.size(); ++i) {
+        results[i] = float4_to_uchar4_rounded(results_float4[i]);
+    }
+
+    return {source_image.width, source_image.height, results};
 }
 }  // namespace blur
 
