@@ -9,24 +9,12 @@
 
 namespace blur {
 template <typename T>
-__device__ T abs(T a) {
+__host__ __device__ T abs(T a) {
     if (a < 0) return -a;
     return a;
 }
 
-template <typename T>
-__device__ T min(T a, T b) {
-    if (a < b) return a;
-    return b;
-}
-
-template <typename T>
-__device__ T max(T a, T b) {
-    if (a > b) return a;
-    return b;
-}
-
-float gaussian_fuction(float x, float r) {
+__host__ __device__ float gaussian_fuction(float x, float r) {
     return 1.0 / sqrt(2.0 * M_PI * r * r) * exp(-x * x / (2.0 * r * r));
 }
 
@@ -80,7 +68,7 @@ __host__ __device__ float4 uchar4_to_float4(uchar4 p) {
     return make_float4(p.x, p.y, p.z, p.w);
 }
 
-__host__ __device__ uchar4 float4_to_uchar4_rounded(float4 p) {
+__host__ __device__ uchar4 float4_to_uchar4(float4 p) {
     return make_uchar4((p.x), (p.y), (p.z), (p.w));
 }
 
@@ -91,12 +79,11 @@ __device__ float4 gaussian_blur_kernel(int y, int x, int radius,
                                        const float* weights, bool vertical) {
     float4 result = make_float4(0, 0, 0, 0);
     for (int i = -radius; i <= radius; ++i) {
-        float4 p = tex2D(source_texture, (vertical) ? x : x + i,
-                         (vertical) ? y + i : y);
-        // printf("%f %f %f %d\n", p.x, p.y, p.z, p.w);
+        float4 p =
+            tex2D((vertical) ? intermediate_results_texture : source_texture,
+                  (vertical) ? x : x + i, (vertical) ? y + i : y);
         result = float4_add(result, float4_multiply(p, weights[abs(i)]));
     }
-    // printf("%f %f %f %f\n", r, g, b, w);
     return result;
 }
 
@@ -117,7 +104,15 @@ __global__ void gaussian_blur(float4* data, int width, int height, int radius,
 }
 
 template <size_t NBlocks = 256, size_t NThreads = 256>
-image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
+void ApplyGaussianBlur(image::Image& source_image, int radius) {
+    if (radius == 0) {
+        return;
+    }
+    if (radius < 0) {
+        FATAL("invalid radius")
+        return;
+    }
+
     // transform source data to floats
     std::vector<float4> source_data(source_image.data.size());
     for (size_t i = 0; i < source_data.size(); ++i)
@@ -150,7 +145,10 @@ image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
         weights.Data(), false);
     CHECK_KERNEL_ERRORS();
 
-    cudaDeviceSynchronize();
+    // source texture cleanup
+    CHECK_CALL_ERRORS(cudaUnbindTexture(source_texture));
+    CHECK_CALL_ERRORS(cudaFreeArray(source_array));
+
     // intermediate results texture initialization
     cudaArray* intermediate_results_array;
     {
@@ -159,11 +157,12 @@ image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
                                           &channel_desc, source_image.width,
                                           source_image.height));
         CHECK_CALL_ERRORS(cudaMemcpyToArray(
-            source_array, 0, 0, first_results.Data(),
+            intermediate_results_array, 0, 0, first_results.Data(),
             sizeof(float4) * first_results.Size(), cudaMemcpyDeviceToDevice));
         CHECK_CALL_ERRORS(cudaBindTextureToArray(intermediate_results_texture,
                                                  intermediate_results_array,
                                                  channel_desc));
+        first_results.Clear();
     }
 
     // vertical
@@ -174,21 +173,16 @@ image::Image ApplyGaussianBlur(const image::Image& source_image, int radius) {
         weights.Data(), true);
     CHECK_KERNEL_ERRORS();
 
-    // source texture cleanup
-    CHECK_CALL_ERRORS(cudaUnbindTexture(source_texture));
-    CHECK_CALL_ERRORS(cudaFreeArray(source_array));
-
     // intermediate results texture cleanup
     CHECK_CALL_ERRORS(cudaUnbindTexture(intermediate_results_texture));
     CHECK_CALL_ERRORS(cudaFreeArray(intermediate_results_array));
 
     std::vector<float4> results_float4 = second_results.Host();
-    std::vector<uchar4> results(results_float4.size());
-    for (size_t i = 0; i < results.size(); ++i) {
-        results[i] = float4_to_uchar4_rounded(results_float4[i]);
+    for (size_t i = 0; i < source_image.data.size(); ++i) {
+        source_image.data[i] = float4_to_uchar4(results_float4[i]);
     }
 
-    return {source_image.width, source_image.height, results};
+    return;
 }
 }  // namespace blur
 

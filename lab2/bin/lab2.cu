@@ -22,8 +22,7 @@ int main() {
     std::cin >> radius;
 
     image::Image image = image::ReadImage(input_path);
-    image = blur::ApplyGaussianBlur(image, radius);
+    blur::ApplyGaussianBlur(image, radius);
     image::WriteImage(image, output_path);
-
     return 0;
 }
