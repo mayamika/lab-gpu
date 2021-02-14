@@ -13,10 +13,6 @@ namespace classification {
 const int MaxClasses = 32;
 __constant__ float4 averages[MaxClasses];
 
-// texture
-using _CudaTexture = texture<uchar4, 2, cudaReadModeElementType>;
-_CudaTexture source_texture;
-
 struct Coords {
     int x, y;
 };
@@ -62,7 +58,6 @@ __host__ __device__ float4 __float4_div(float4 u, float v) {
     return u;
 }
 
-template <size_t NBlocks = 256, size_t NThreads = 256>
 void __initialize_averages(const image::Image& image,
                            const std::vector<std::vector<Coords>>& classes) {
     std::vector<float4> avg(classes.size(), make_float4(0, 0, 0, 0));
@@ -78,29 +73,11 @@ void __initialize_averages(const image::Image& image,
                                          cudaMemcpyHostToDevice));
 }
 
-void __initialize_texture(cudaArray** array, const image::Image& image) {
-    // texture binding
-    cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<uchar4>();
-    CHECK_CALL_ERRORS(
-        cudaMallocArray(array, &channel_desc, image.width, image.height));
-    CHECK_CALL_ERRORS(cudaMemcpyToArray(*array, 0, 0, image.data.data(),
-                                        sizeof(uchar4) * image.data.size(),
-                                        cudaMemcpyHostToDevice));
-    CHECK_CALL_ERRORS(
-        cudaBindTextureToArray(source_texture, *array, channel_desc));
-}
-
-void __free_texture(cudaArray* array) {
-    CHECK_CALL_ERRORS(cudaUnbindTexture(source_texture));
-    CHECK_CALL_ERRORS(cudaFreeArray(array));
-}
-
-__device__ char __classify_pixel(int y, int x, int nclasses) {
+__device__ char __classify_pixel(float4 pixel, int nclasses) {
     // initial class
     char nclass = -1;
     float max;
 
-    float4 pixel = __uchar4_to_float4(tex2D(source_texture, x, y));
     for (char i = 0; i < nclasses; ++i) {
         float val = -1. * __float4_dot(__float4_sub(pixel, averages[i]),
                                        __float4_sub(pixel, averages[i]));
@@ -113,17 +90,13 @@ __device__ char __classify_pixel(int y, int x, int nclasses) {
     return nclass;
 }
 
-__global__ void __classify(uchar4* data, int width, int height, int nclasses) {
-    int id_x = threadIdx.x + blockIdx.x * blockDim.x;
-    int id_y = threadIdx.y + blockIdx.y * blockDim.y;
+__global__ void __classify(uchar4* data, int size, int nclasses) {
+    size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+    size_t offset = blockDim.x * gridDim.x;
 
-    int offset_x = blockDim.x * gridDim.x;
-    int offset_y = blockDim.y * gridDim.y;
-
-    for (int i = id_y; i < height; i += offset_y) {
-        for (int j = id_x; j < width; j += offset_x) {
-            data[i * width + j].w = __classify_pixel(i, j, nclasses);
-        }
+    for (int i = idx; i < size; i += offset) {
+        float4 pixel = __uchar4_to_float4(data[i]);
+        data[i].w = __classify_pixel(pixel, nclasses);
     }
 }
 
@@ -137,21 +110,18 @@ void MinimumDistance(image::Image& image,
     if (classes.size() == 0) {
         return;
     }
-    cudaArray* texture_array;
-    __initialize_texture(&texture_array, image);
     // pre-calulate averages to store them in constant memory
-    __initialize_averages<NBlocks, NThreads>(image, classes);
+    __initialize_averages(image, classes);
 
     gpu::Vector<uchar4> gpu_data(image.data);
     // classify
-    __classify<<<NBlocks, NThreads>>>(gpu_data.Data(), image.width,
-                                      image.height, classes.size());
+    __classify<<<NBlocks, NThreads>>>(gpu_data.Data(), gpu_data.Size(),
+                                      classes.size());
     CHECK_KERNEL_ERRORS();
 
     // copy values back
     gpu_data.Populate(image.data);
 
-    __free_texture(texture_array);
     return;
 }
 }  // namespace classification

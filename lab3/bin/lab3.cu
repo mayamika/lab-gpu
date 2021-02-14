@@ -34,7 +34,6 @@ int main() {
     }
 
     image::Image image = image::ReadImage(input_path);
-    std::cerr << image.width << ' ' << image.height << '\n' << nclasses << '\n';
     classification::MinimumDistance(image, classes);
     image::WriteImage(image, output_path);
     return 0;
