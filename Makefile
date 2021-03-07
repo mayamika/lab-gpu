@@ -1,17 +1,24 @@
-# packing
+# Packing and signing
 
-OUTPUT_DIR := ./packages/
-PACKAGES := $(addprefix $(OUTPUT_DIR),$(addsuffix .tar,$(wildcard lab*)))
-SIGNER_EMAIL= andranik.chakiryan@gmail.com
+OUTPUT_DIR ?= ./packages/
+SIGNER_EMAIL ?= andranik.chakiryan@gmail.com
 
-$(addprefix $(OUTPUT_DIR),%.tar):
-	@mkdir -p $(OUTPUT_DIR)
+PACKAGES := $(addprefix $(OUTPUT_DIR)/,$(addsuffix .tar,$(wildcard lab*)))
+SIGNS := $(addsuffix .asc,$(PACKAGES))
+
+all: $(PACKAGES) $(SIGNS)
+
+$(OUTPUT_DIR):
+	mkdir $(OUTPUT_DIR)
+
+.PHONY: $(PACKAGES)
+$(PACKAGES): $(OUTPUT_DIR)/%.tar: | $(OUTPUT_DIR)
 	$(MAKE) -C "$*" clean
 	tar -cf "$@" "$*"
-	$(RM) "$@.asc"
-	gpg -u $(SIGNER_EMAIL) -ab "$@"
 
-all: $(PACKAGES)
+%.asc: %
+	$(RM) $@
+	gpg -u $(SIGNER_EMAIL) -ab "$*"
 
 .PHONY: clean
 clean:
