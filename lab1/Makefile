@@ -1,31 +1,27 @@
-# compilation
 CC := nvcc
 CFLAGS := -Werror cross-execution-space-call -lm -D_MWAITXINTRIN_H_INCLUDED
 
-CPPSTD ?=
 ifneq ($(CPPSTD),)
 CFLAGS += -std=$(CPPSTD)
+endif
+
+ifeq ($(BENCHMARK),true)
+CFLAGS += -DBENCHMARK
 endif
 
 NBLOCKS ?= 256
 NTHREADS ?= 256
 CFLAGS += -DNBLOCKS=$(NBLOCKS) -DNTHREADS=$(NTHREADS)
 
-ifeq ($(BENCHMARK),true)
-CFLAGS += -DBENCHMARK
-endif
-
-# target
 TARGET := lab1
 
-# paths
 BINARIES_DIR := ./bin/
 SOURCES_DIR := ./src/
 
 all: $(TARGET)
 
 $(TARGET): $(BINARIES_DIR)/$(TARGET).cu $(wildcard $(SOURCES_DIR)/*.cuh $(SOURCES_DIR)/*.cu)
-	$(CC) $(CFLAGS) -o "$@" $(BINARIES_DIR)/$(TARGET).cu -I$(SOURCES_DIR)
+	$(CC) $(CFLAGS) -o "$@" $< -I$(SOURCES_DIR)
 
 .PHONY: clean
 clean:
