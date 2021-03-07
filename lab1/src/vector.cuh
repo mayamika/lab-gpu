@@ -4,6 +4,7 @@
 #include <cstring>
 #include <vector>
 
+#include "benchmark.cuh"
 #include "errors.cuh"
 
 namespace gpu {
@@ -101,8 +102,8 @@ public:
         }
         size_t size = lhs.size_;
         Vector result(size);
-        __elementwise_min<<<NBlocks, NThreads>>>(result.data_, size, lhs.data_,
-                                                 rhs.data_);
+        MEASURE((__elementwise_min<<<NBlocks, NThreads>>>(
+            result.data_, size, lhs.data_, rhs.data_)));
         CHECK_KERNEL_ERRORS();
         return result;
     }

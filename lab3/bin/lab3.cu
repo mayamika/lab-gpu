@@ -12,7 +12,17 @@
 #include "image.cuh"
 #include "signals.cuh"
 
+#ifndef NBLOCKS
+#define NBLOCKS 256
+#endif
+#ifndef NTHREADS
+#define NTHREADS 256
+#endif
+
 int main() {
+#ifdef BENCHMARK
+    std::cerr << NBLOCKS << ' ' << NTHREADS << '\n';
+#endif
     std::ios::sync_with_stdio(false);
     signals::HandleSignals();
 

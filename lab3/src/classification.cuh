@@ -4,6 +4,7 @@
 #include <tuple>
 #include <vector>
 
+#include "benchmark.cuh"
 #include "errors.cuh"
 #include "image.cuh"
 #include "vector.cuh"
@@ -115,8 +116,8 @@ void MinimumDistance(image::Image& image,
 
     gpu::Vector<uchar4> gpu_data(image.data);
     // classify
-    __classify<<<NBlocks, NThreads>>>(gpu_data.Data(), gpu_data.Size(),
-                                      classes.size());
+    MEASURE((__classify<<<NBlocks, NThreads>>>(gpu_data.Data(), gpu_data.Size(),
+                                               classes.size())));
     CHECK_KERNEL_ERRORS();
 
     // copy values back

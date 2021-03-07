@@ -3,6 +3,7 @@
 
 #include <cmath>
 
+#include "benchmark.cuh"
 #include "errors.cuh"
 #include "image.cuh"
 #include "vector.cuh"
@@ -140,9 +141,9 @@ void ApplyGaussianBlur(image::Image& source_image, int radius) {
     // horizontal
     gpu::Vector<float4, NBlocks, NThreads> first_results(
         source_image.data.size(), make_float4(0, 0, 0, 0));
-    gaussian_blur<<<grid_dim, block_dim>>>(
+    MEASURE((gaussian_blur<<<grid_dim, block_dim>>>(
         first_results.Data(), source_image.width, source_image.height, radius,
-        weights.Data(), false);
+        weights.Data(), false)));
     CHECK_KERNEL_ERRORS();
 
     // source texture cleanup
@@ -168,9 +169,9 @@ void ApplyGaussianBlur(image::Image& source_image, int radius) {
     // vertical
     gpu::Vector<float4, NBlocks, NThreads> second_results(
         source_image.data.size(), make_float4(0, 0, 0, 0));
-    gaussian_blur<<<grid_dim, block_dim>>>(
+    MEASURE((gaussian_blur<<<grid_dim, block_dim>>>(
         second_results.Data(), source_image.width, source_image.height, radius,
-        weights.Data(), true);
+        weights.Data(), true)));
     CHECK_KERNEL_ERRORS();
 
     // intermediate results texture cleanup

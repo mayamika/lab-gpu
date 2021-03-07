@@ -4,7 +4,15 @@ CFLAGS := -Werror cross-execution-space-call -lm -D_MWAITXINTRIN_H_INCLUDED
 
 CPPSTD ?=
 ifneq ($(CPPSTD),)
-CFLAGS := $(CFLAGS) -std=$(CPPSTD)
+CFLAGS += -std=$(CPPSTD)
+endif
+
+NBLOCKS ?= 256
+NTHREADS ?= 256
+CFLAGS += -DNBLOCKS=$(NBLOCKS) -DNTHREADS=$(NTHREADS)
+
+ifeq ($(BENCHMARK),true)
+CFLAGS += -DBENCHMARK
 endif
 
 # target

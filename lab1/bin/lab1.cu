@@ -3,7 +3,17 @@
 
 #include "vector.cuh"
 
+#ifndef NBLOCKS
+#define NBLOCKS 256
+#endif
+#ifndef NTHREADS
+#define NTHREADS 256
+#endif
+
 int main() {
+#ifdef BENCHMARK
+    std::cerr << NBLOCKS << ' ' << NTHREADS << '\n';
+#endif
     std::ios::sync_with_stdio(false);
 
     int size;
@@ -21,7 +31,9 @@ int main() {
     }
 
     std::vector<float> mins =
-        ElementwiseMin(gpu::Vector<float>(lhs), gpu::Vector<float>(rhs)).Host();
+        ElementwiseMin(gpu::Vector<float, NBLOCKS, NTHREADS>(lhs),
+                       gpu::Vector<float, NBLOCKS, NTHREADS>(rhs))
+            .Host();
 
     std::cout.precision(10);
     std::cout << std::fixed << std::scientific;

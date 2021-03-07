@@ -8,6 +8,7 @@
 #include <iostream>
 #include <vector>
 
+#include "benchmark.cuh"
 #include "errors.cuh"
 #include "vector.cuh"
 
@@ -185,8 +186,8 @@ void Inverse(Matrix& matrix) {
     __matrix_put_ones<<<NBlocks, NThreads>>>(destination_data.Data(), n,
                                              gpu_rows_permutation.Data());
     CHECK_KERNEL_ERRORS();
-    __lu_solve<<<NBlocks, NThreads>>>(destination_data.Data(),
-                                      source_data.Data(), n);
+    MEASURE((__lu_solve<<<NBlocks, NThreads>>>(destination_data.Data(),
+                                               source_data.Data(), n)));
     CHECK_KERNEL_ERRORS();
 
     // copy values back
