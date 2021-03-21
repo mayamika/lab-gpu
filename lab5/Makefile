@@ -9,8 +9,13 @@ ifeq ($(BENCHMARK),true)
 CFLAGS += -DBENCHMARK
 endif
 
+# DEBUG ?= true
+ifeq ($(DEBUG),true)
+CFLAGS += -DDEBUG
+endif
+
 NBLOCKS ?= 256
-NTHREADS ?= 256
+NTHREADS ?= 1024
 CFLAGS += -DNBLOCKS=$(NBLOCKS) -DNTHREADS=$(NTHREADS)
 
 TARGET := lab5

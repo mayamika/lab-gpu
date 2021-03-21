@@ -20,17 +20,26 @@ int main() {
     signals::HandleSignals();
 
     uint32_t size;
+#ifdef DEBUG
+    std::cin >> size;
+#else
     binary::ReadBinary(std::cin, size);
+#endif
     std::vector<float> data(size);
+#ifdef DEBUG
+    for (auto &it : data) std::cin >> it;
+#else
     binary::ReadBinaryArray(std::cin, data.data(), size);
-    std::cerr << '[';
-    for (auto it : data) {
-        std::cerr << it << ' ';
-    }
-    std::cerr << ']' << std::endl;
+#endif
 
-    sort::BucketSort(data);
-    // binary::WriteBinaryArray(std::cout, data.data(), size);
-
+    sort::BucketSort<float, NBLOCKS, NTHREADS>(data);
+#ifdef DEBUG
+    std::cerr << size << std::endl;
+    std::cerr << "[ ";
+    for (auto it : data) std::cerr << it << ' ';
+    std::cerr << "]" << std::endl;
+#else
+    binary::WriteBinaryArray(std::cout, data.data(), size);
+#endif
     return 0;
 }
