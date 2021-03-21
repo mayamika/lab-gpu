@@ -1,6 +1,10 @@
 #!/usr/bin/python3
 
-l = list(range(-2500, 2500))
+from random import shuffle
+
+r = 1024
+l = list(range(-r, r))
+shuffle(l)
 n = len(l)
 with open('in',  'w') as f:
     f.write(str(n) + ' ')

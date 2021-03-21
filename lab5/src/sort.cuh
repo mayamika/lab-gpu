@@ -5,11 +5,10 @@
 #include <thrust/execution_policy.h>
 #include <thrust/extrema.h>
 
+#include <iostream>
 #include <tuple>
 #include <type_traits>
 #include <vector>
-// TODO: remove it!
-#include <iostream>
 
 #include "errors.cuh"
 #include "vector.cuh"
@@ -212,27 +211,28 @@ __host__ void __debug_print_data(const gpu::Vector<T>& data) {
 template <typename T, size_t NBlocks, size_t NThreads>
 __host__ void __exclusive_prefix_sum(gpu::Vector<T>& data) {
     size_t size = data.Size();
-    if (size > 1) {
-        gpu::Vector<T> partial_sums = gpu::MakeVector<T, NBlocks, NThreads>(
-            (size + NThreads - 1) / NThreads, T{});
-        __partial_blelloch_scan<T, NThreads><<<NBlocks, NThreads>>>(
-            data.Data(), data.Size(), partial_sums.Data());
-        if (partial_sums.Size() > 1) {
-            // partial sums scan & add sums to partial scans
-            if (partial_sums.Size() > 2 * NThreads) {
-                FATAL("not enouth threads to calculate overall scan");
-            }
-            cudaDeviceSynchronize();
-            CHECK_KERNEL_ERRORS();
-            __single_block_blelloch_scan<T, NThreads>
-                <<<1, NThreads>>>(partial_sums.Data(), partial_sums.Size());
-            cudaDeviceSynchronize();
-            CHECK_KERNEL_ERRORS();
-            __merge_scans<T><<<NBlocks, NThreads>>>(data.Data(), data.Size(),
-                                                    partial_sums.Data());
-            CHECK_KERNEL_ERRORS();
-        }
+    if (size < 2) {
+        return;
     }
+    if (size <= 2 * NThreads) {
+        __single_block_blelloch_scan<T, NThreads>
+            <<<1, NThreads>>>(data.Data(), data.Size());
+        CHECK_KERNEL_ERRORS();
+        return;
+    }
+    // partial recursive scan
+    gpu::Vector<T> partial_sums = gpu::MakeVector<T, NBlocks, NThreads>(
+        (size + NThreads - 1) / NThreads, T{});
+    __partial_blelloch_scan<T, NThreads>
+        <<<NBlocks, NThreads>>>(data.Data(), data.Size(), partial_sums.Data());
+    cudaDeviceSynchronize();
+    CHECK_KERNEL_ERRORS();
+    __exclusive_prefix_sum<T, NBlocks, NThreads>(partial_sums);
+    cudaDeviceSynchronize();
+    CHECK_KERNEL_ERRORS();
+    __merge_scans<T>
+        <<<NBlocks, NThreads>>>(data.Data(), data.Size(), partial_sums.Data());
+    CHECK_KERNEL_ERRORS();
 }
 
 template <typename Float, size_t NBlocks, size_t NThreads>
@@ -343,6 +343,51 @@ __host__ void __odd_even_sort(gpu::Vector<T>& data, size_t begin, size_t end) {
     }
 }
 
+template <typename T, size_t NThreads>
+__global__ void __partial_odd_even_sort_kernel(T* data, int64_t size,
+                                               const uint32_t* offsets,
+                                               int64_t nbuckets) {
+    int64_t tidx = threadIdx.x;
+    for (int64_t bucket = blockIdx.x; bucket < nbuckets; bucket += gridDim.x) {
+        int64_t segment_begin = offsets[bucket];
+        int64_t segment_end =
+            (bucket + 1 == nbuckets) ? size : offsets[bucket + 1];
+        int64_t segment_size = segment_end - segment_begin;
+        __syncthreads();
+        __shared__ T shared[2 * NThreads];
+        {
+            int64_t j = segment_begin + 2 * tidx;
+            if (j < segment_end) shared[j - segment_begin] = data[j];
+            if (j + 1 < segment_end)
+                shared[j - segment_begin + 1] = data[j + 1];
+        }
+        for (size_t i = 0; i < segment_size; ++i) {
+            __syncthreads();
+            size_t j = 2 * tidx + (!(i & 1));
+            if (j + 1 < segment_size && shared[j] > shared[j + 1]) {
+                T t = shared[j];
+                shared[j] = shared[j + 1];
+                shared[j + 1] = t;
+            }
+        }
+        {
+            __syncthreads();
+            int64_t j = segment_begin + 2 * tidx;
+            if (j < segment_end) data[j] = shared[j - segment_begin];
+            if (j + 1 < segment_end)
+                data[j + 1] = shared[j - segment_begin + 1];
+        }
+    }
+}
+
+template <typename T, size_t NBlocks, size_t NThreads>
+__host__ void __partial_odd_even_sort(gpu::Vector<T>& data,
+                                      const gpu::Vector<uint32_t>& offsets) {
+    __partial_odd_even_sort_kernel<T, NThreads><<<NBlocks, NThreads>>>(
+        data.Data(), data.Size(), offsets.Data(), offsets.Size());
+    CHECK_KERNEL_ERRORS();
+}
+
 template <typename Float, size_t NBlocks = 256, size_t NThreads = 256>
 void BucketSort(std::vector<Float>& data) {
     static_assert(std::is_floating_point<Float>::value,
@@ -353,22 +398,37 @@ void BucketSort(std::vector<Float>& data) {
     }
     gpu::Vector<Float> gpu_data(data);
     __BucketIndexer<Float> bucket_indexer =
-        __make_bucket_indexer<Float, NBlocks, NThreads>(
-            gpu_data, __min(2 * NThreads * NThreads, size));
+        __make_bucket_indexer<Float, NBlocks, NThreads>(gpu_data, size);
     gpu::Vector<uint32_t> offsets =
         __bucket_offsets<Float, NBlocks, NThreads>(gpu_data, bucket_indexer);
     cudaDeviceSynchronize();
     gpu::Vector<Float> grouped_data = __bucket_group<Float, NBlocks, NThreads>(
         gpu_data, offsets, bucket_indexer);
     cudaDeviceSynchronize();
-    auto cpu_offsets = offsets.Host();
-    std::cerr << "cum zone" << std::endl;
-    for (size_t bucket = 0; bucket < cpu_offsets.size(); ++bucket) {
-        auto begin = cpu_offsets[bucket];
-        auto end =
-            (bucket + 1 == cpu_offsets.size()) ? size : cpu_offsets[bucket + 1];
-        __odd_even_sort<Float, NBlocks, NThreads>(grouped_data, begin, end);
-    }
+    __partial_odd_even_sort<Float, NBlocks, NThreads>(grouped_data, offsets);
+    // for (size_t bucket = 0; bucket < cpu_offsets.size(); ++bucket) {
+    //     auto begin = cpu_offsets[bucket];
+    //     auto end =
+    //         (bucket + 1 == cpu_offsets.size()) ? size : cpu_offsets[bucket +
+    //         1];
+    //     __odd_even_sort<Float, NBlocks, NThreads>(grouped_data, begin, end);
+    // }
+    // for (size_t bucket = 0, nbuckets = cpu_offsets.size();
+    //      bucket != nbuckets;) {
+    //     while (bucket + 1 < nbuckets &&
+    //            cpu_offsets[bucket + 1] - cpu_offsets[bucket] < 2)
+    //         ++bucket;
+    //     size_t bucket_end = bucket + 1;
+    //     while (bucket_end + 1 < nbuckets &&
+    //            cpu_offsets[bucket_end + 1] - cpu_offsets[bucket] <=
+    //                2 * NThreads)
+    //         ++bucket_end;
+    //     auto begin = cpu_offsets[bucket];
+    //     auto end = (bucket_end == nbuckets) ? size : cpu_offsets[bucket_end];
+    //     __odd_even_sort<Float, NBlocks, NThreads>(grouped_data, begin, end);
+    //     bucket = bucket_end;
+    // }
+
     grouped_data.Populate(data);
 }
 }  // namespace sort

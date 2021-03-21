@@ -101,6 +101,7 @@ Vector<Type> MakeVector(size_t size, Type initializer = Type()) {
     vector.size_ = size;
     CHECK_CALL_ERRORS(cudaMalloc(&vector.data_, sizeof(Type) * vector.size_));
     __memset<<<NBlocks, NThreads>>>(vector.data_, vector.size_, initializer);
+    cudaDeviceSynchronize();
     CHECK_KERNEL_ERRORS();
     return vector;
 }
