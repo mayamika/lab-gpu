@@ -16,6 +16,12 @@
 
 namespace sort {
 template <typename T>
+__host__ __device__ T __max(T a, T b) {
+    if (a > b) return a;
+    return b;
+}
+
+template <typename T>
 __host__ __device__ T __min(T a, T b) {
     if (a < b) return a;
     return b;
@@ -141,36 +147,42 @@ __global__ void __partial_blelloch_scan(T* data, int64_t size,
          segment_begin += offset) {
         int64_t segment_end = __min(segment_begin + blockDim.x, size);
         int64_t segment_size = segment_end - segment_begin;
+        __syncthreads();
         __shared__ T shared[2 * NThreads];
         {
             int64_t j = segment_end - 2 * tidx - 1;
-            if (j >= 0) shared[j] = data[j];
-            if (j - 1 >= 0) shared[j - 1] = data[j - 1];
+            if (j >= segment_begin) shared[j - segment_begin] = data[j];
+            if (j - 1 >= segment_begin)
+                shared[j - 1 - segment_begin] = data[j - 1];
         }
         int64_t layer = 1;
-        for (; layer < data_segment_size; layer <<= 1) {
+        for (; layer < segment_size; layer <<= 1) {
             __syncthreads();
-            int64_t j = data_segment_end - 1 - 2 * layer * tidx;
-            if (j - layer >= data_segment_begin) {
-                data[j] += data[j - layer];
+            int64_t j = segment_size - 1 - 2 * layer * tidx;
+            if (j - layer >= 0) {
+                shared[j] += shared[j - layer];
             }
         }
-
         __syncthreads();
         if (tidx == 0) {
-            partial_sums[data_segment_begin / blockDim.x] =
-                data[data_segment_end - 1];
-            data[data_segment_end - 1] = 0;
+            partial_sums[segment_begin / blockDim.x] = shared[segment_size - 1];
+            shared[segment_size - 1] = 0;
         }
-
         for (; layer > 0; layer >>= 1) {
             __syncthreads();
-            int64_t j = data_segment_end - 1 - 2 * layer * tidx;
-            if (j - layer >= data_segment_begin) {
-                T t = data[j];
-                data[j] += data[j - layer];
-                data[j - layer] = t;
+            int64_t j = segment_size - 1 - 2 * layer * tidx;
+            if (j - layer >= 0) {
+                T t = shared[j];
+                shared[j] += shared[j - layer];
+                shared[j - layer] = t;
             }
+        }
+        __syncthreads();
+        {
+            int64_t j = segment_end - 2 * tidx - 1;
+            if (j >= segment_begin) data[j] = shared[j - segment_begin];
+            if (j - 1 >= segment_begin)
+                data[j - 1] = shared[j - 1 - segment_begin];
         }
     }
 }
@@ -189,11 +201,11 @@ __global__ void __merge_scans(T* data, size_t data_size, T* partial_sums) {
 template <typename T>
 __host__ void __debug_print_data(const gpu::Vector<T>& data) {
     auto cpu = data.Host();
-    std::cerr << cpu.size() << "_[ ";
+    std::cerr << cpu.size() << std::endl;
     for (auto it : cpu) {
         std::cerr << it << ' ';
     }
-    std::cerr << "]" << std::endl;
+    std::cerr << std::endl;
 }
 #endif
 
@@ -203,7 +215,7 @@ __host__ void __exclusive_prefix_sum(gpu::Vector<T>& data) {
     if (size > 1) {
         gpu::Vector<T> partial_sums = gpu::MakeVector<T, NBlocks, NThreads>(
             (size + NThreads - 1) / NThreads, T{});
-        __partial_blelloch_scan<T><<<NBlocks, NThreads>>>(
+        __partial_blelloch_scan<T, NThreads><<<NBlocks, NThreads>>>(
             data.Data(), data.Size(), partial_sums.Data());
         if (partial_sums.Size() > 1) {
             // partial sums scan & add sums to partial scans
@@ -214,9 +226,6 @@ __host__ void __exclusive_prefix_sum(gpu::Vector<T>& data) {
             CHECK_KERNEL_ERRORS();
             __single_block_blelloch_scan<T, NThreads>
                 <<<1, NThreads>>>(partial_sums.Data(), partial_sums.Size());
-#ifdef DEBUG
-            __debug_print_data<T>(partial_sums);
-#endif
             cudaDeviceSynchronize();
             CHECK_KERNEL_ERRORS();
             __merge_scans<T><<<NBlocks, NThreads>>>(data.Data(), data.Size(),
@@ -286,8 +295,46 @@ __global__ void __odd_even_sort_kernel(T* data, size_t begin, size_t end,
     }
 }
 
+template <typename T, size_t NThreads>
+__global__ void __single_block_odd_even_sort_kernel(T* data, int64_t begin,
+                                                    int64_t end) {
+    int64_t tidx = threadIdx.x;
+    int64_t size = end - begin;
+    __shared__ T shared[2 * NThreads];
+    {
+        int64_t j = begin + 2 * tidx;
+        if (j < end) shared[j - begin] = data[j];
+        if (j + 1 < end) shared[j - begin + 1] = data[j + 1];
+    }
+    for (size_t i = 0; i < size; ++i) {
+        __syncthreads();
+        size_t j = 2 * tidx + (!(i & 1));
+        if (j + 1 < size && shared[j] > shared[j + 1]) {
+            T t = shared[j];
+            shared[j] = shared[j + 1];
+            shared[j + 1] = t;
+        }
+    }
+    {
+        __syncthreads();
+        int64_t j = begin + 2 * tidx;
+        if (j < end) data[j] = shared[j - begin];
+        if (j + 1 < end) data[j + 1] = shared[j - begin + 1];
+    }
+}
+
 template <typename T, size_t NBlocks, size_t NThreads>
 __host__ void __odd_even_sort(gpu::Vector<T>& data, size_t begin, size_t end) {
+    size_t size = end - begin;
+    if (size < 2) {
+        return;
+    }
+    if (size <= 2 * NThreads) {
+        __single_block_odd_even_sort_kernel<T, NThreads>
+            <<<1, NThreads>>>(data.Data(), begin, end);
+        CHECK_KERNEL_ERRORS();
+        return;
+    }
     for (size_t i = begin; i < end; ++i) {
         cudaDeviceSynchronize();
         __odd_even_sort_kernel<T>
@@ -301,13 +348,13 @@ void BucketSort(std::vector<Float>& data) {
     static_assert(std::is_floating_point<Float>::value,
                   "only floating-point types allowed");
     size_t size = data.size();
-    if (size == 0) {
+    if (size < 2) {
         return;
     }
     gpu::Vector<Float> gpu_data(data);
     __BucketIndexer<Float> bucket_indexer =
         __make_bucket_indexer<Float, NBlocks, NThreads>(
-            gpu_data, __min(NThreads * NThreads, size));
+            gpu_data, __min(2 * NThreads * NThreads, size));
     gpu::Vector<uint32_t> offsets =
         __bucket_offsets<Float, NBlocks, NThreads>(gpu_data, bucket_indexer);
     cudaDeviceSynchronize();
@@ -315,11 +362,12 @@ void BucketSort(std::vector<Float>& data) {
         gpu_data, offsets, bucket_indexer);
     cudaDeviceSynchronize();
     auto cpu_offsets = offsets.Host();
+    std::cerr << "cum zone" << std::endl;
     for (size_t bucket = 0; bucket < cpu_offsets.size(); ++bucket) {
+        auto begin = cpu_offsets[bucket];
         auto end =
             (bucket + 1 == cpu_offsets.size()) ? size : cpu_offsets[bucket + 1];
-        __odd_even_sort<Float, NBlocks, NThreads>(grouped_data,
-                                                  cpu_offsets[bucket], end);
+        __odd_even_sort<Float, NBlocks, NThreads>(grouped_data, begin, end);
     }
     grouped_data.Populate(data);
 }
