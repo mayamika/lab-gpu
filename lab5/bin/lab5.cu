@@ -35,8 +35,10 @@ int main() {
     sort::BucketSort<float, NBLOCKS, NTHREADS>(data);
 #ifdef DEBUG
     std::cerr << size << std::endl;
-    for (auto it : data) std::cerr << it << ' ';
-    std::cerr << std::endl;
+    if (size <= 2048) {
+        for (auto it : data) std::cerr << it << ' ';
+        std::cerr << std::endl;
+    }
 #else
     binary::WriteBinaryArray(std::cout, data.data(), size);
 #endif
