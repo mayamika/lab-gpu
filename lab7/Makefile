@@ -9,7 +9,6 @@ ifeq ($(BENCHMARK),true)
 CFLAGS += -DBENCHMARK
 endif
 
-# DEBUG ?= true
 ifeq ($(DEBUG),true)
 CFLAGS += -DDEBUG
 endif
